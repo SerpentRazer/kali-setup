@@ -1,0 +1,12 @@
+#!/bin/sh
+# /etc/sddm/Xsetup-primary — DisplayCommand pt SDDM (din /etc/sddm.conf.d/x11-primary.conf), ruleaza ca root inainte de login.
+# 11 nov 2026: ruleaza Xsetup-ul original al pachetului, apoi face monitorul extern de pe HDMI (Samsung) ecran PRINCIPAL:
+# tema cyberglass arata login-ul doar pe primaryScreen, iar SDDM da focusul tastaturii ferestrei de pe primar.
+# Fara HDMI conectat (sau in Hybrid Mode, cand X-ul de login vede doar Intel/laptopul) nu schimba nimic.
+[ -x /usr/share/sddm/scripts/Xsetup ] && /usr/share/sddm/scripts/Xsetup
+if command -v xrandr >/dev/null 2>&1; then
+    OUT=$(xrandr --query 2>/dev/null | awk '$2 == "connected" && $1 ~ /^HDMI/ {print $1; exit}')
+    { date; xrandr --query 2>&1 | grep -w connected; echo "primar: ${OUT:-neschimbat}"; } > /var/log/sddm-xsetup.log 2>&1
+    [ -n "$OUT" ] && xrandr --output "$OUT" --primary
+fi
+exit 0

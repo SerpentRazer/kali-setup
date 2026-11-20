@@ -1,0 +1,8 @@
+# niciodata in repo
+*.pem
+*.key
+id_*
+.env
+**/notifications.json
+__pycache__/
+*.deb

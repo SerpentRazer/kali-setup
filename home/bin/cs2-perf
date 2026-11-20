@@ -1,0 +1,34 @@
+#!/bin/sh
+# cs2-perf CMD...: ruleaza CMD tinand profilul de energie „performance” (platform_profile pe Legion = curba de ventilatoare
+# mai agresiva din EC + EPP performance); la iesire power-profiles-daemon revine singur la profilul de dinainte.
+# Limitele de putere raman 45/65 W (cpu-thermal-protect.service), deci nu incalzeste mai tare, doar raceste mai bine.
+# powerprofilesctl e Python: il pornim fara bibliotecile runtime-ului Steam (LD_LIBRARY_PATH/LD_PRELOAD), iar CMD
+# primeste env-ul original inapoi. Fara powerprofilesctl ruleaza CMD direct. Folosit in LaunchOptions CS2. 2026-10-29
+# 2026-11-01: (1) fara core dump: gamescope 3.16.24 face SIGABRT la FIECARE iesire (bug upstream, reparat in 3.16.25,
+# Kali n-o are) = ~180 MB scrisi pe disc + ~2 s CPU degeaba; (2) fonturile CS2 limitate la cele ale jocului
+# (~/src/legion/cs2-fonts-fix.sh; Steam reface fisierul la update, deci il re-aplicam la fiecare pornire);
+# (3) logger de sesiune (~/src/legion/log-joc.sh -> ~/.cache/joc-log-*) cat timp exista ~/.config/cs2-log-on.
+ulimit -c 0
+env -u LD_LIBRARY_PATH -u LD_PRELOAD sh "$HOME/src/legion/cs2-fonts-fix.sh" apply >/dev/null 2>&1
+[ -e "$HOME/.config/cs2-log-on" ] && env -u LD_LIBRARY_PATH -u LD_PRELOAD setsid -f bash "$HOME/src/legion/log-joc.sh" </dev/null >/dev/null 2>&1
+# (4) 1 nov: ecranul laptopului stins cat ruleaza CS2 (cu Hyprland pe NVIDIA, copia spre laptop trece prin CPU); aprins la iesire
+[ -e "$HOME/.config/cs2-laptop-stins" ] && env -u LD_LIBRARY_PATH -u LD_PRELOAD setsid -f bash "$HOME/src/legion/ecran-laptop-joc.sh" </dev/null >/dev/null 2>&1
+# (5) 8 nov: Shader Pre-Caching oprit in Steam -> fixam noi cache-ul NVIDIA al CS2 exact cum il seta Steam (valori din
+# steamclient.so), ca driverul sa citeasca in continuare steamapp_merged_shader_cache (~2.2 GB, construit pana pe 7 nov)
+# si sa scrie shaderele noi langa el. Fara READ_ONLY_APP_NAME fisierul merged ar fi ignorat. Se aplica si lui gamescope.
+CS2_NVCACHE=/mnt/games/SteamLibrary/steamapps/shadercache/730/nvidiav1
+if [ -d "$CS2_NVCACHE" ]; then
+    export __GL_SHADER_DISK_CACHE=1
+    export __GL_SHADER_DISK_CACHE_PATH="$CS2_NVCACHE"
+    export __GL_SHADER_DISK_CACHE_APP_NAME=steamapp_shader_cache
+    export __GL_SHADER_DISK_CACHE_READ_ONLY_APP_NAME='steam_shader_cache;steamapp_merged_shader_cache'
+    export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
+fi
+command -v powerprofilesctl >/dev/null 2>&1 || exec "$@"
+[ -n "${LD_LIBRARY_PATH+x}" ] && export CS2PERF_LDLP="$LD_LIBRARY_PATH"
+[ -n "${LD_PRELOAD+x}" ] && export CS2PERF_LDP="$LD_PRELOAD"
+exec env -u LD_LIBRARY_PATH -u LD_PRELOAD powerprofilesctl launch -p performance -r CS2 -- sh -c '
+[ -n "${CS2PERF_LDLP+x}" ] && export LD_LIBRARY_PATH="$CS2PERF_LDLP"
+[ -n "${CS2PERF_LDP+x}" ] && export LD_PRELOAD="$CS2PERF_LDP"
+unset CS2PERF_LDLP CS2PERF_LDP
+exec "$@"' cs2-perf "$@"

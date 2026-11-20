@@ -1,0 +1,12 @@
+#!/bin/sh
+# kitty ruleaza Python-ul intern cu -OO (optimize=2), deci cauta *.opt-2.pyc.
+# Debian (py3compile) genereaza doar .pyc simple, iar folderele sunt ale lui root,
+# asa ca fara asta kitty recompileaza ~130 de module la FIECARE pornire (~1.4 s).
+# Rulat automat dupa orice apt/dpkg din /etc/apt/apt.conf.d/99kitty-opt2-pyc.
+# Prerm-urile Debian sterg __pycache__/<modul>.*.pyc, deci si aceste fisiere.
+umask 022
+[ -x /usr/bin/kitty ] || exit 0
+ver=$(ldd /usr/bin/kitty 2>/dev/null | sed -n 's/.*libpython\(3\.[0-9]*\)\.so.*/\1/p' | head -1)
+[ -n "$ver" ] && [ -x "/usr/bin/python$ver" ] || exit 0
+"/usr/bin/python$ver" -m compileall -q -j 0 -o 2 /usr/lib/kitty "/usr/lib/python$ver" >/dev/null 2>&1
+exit 0

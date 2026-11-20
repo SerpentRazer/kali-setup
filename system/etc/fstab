@@ -1,0 +1,34 @@
+# /etc/fstab: static file system information.
+#
+# Use 'blkid' to print the universally unique identifier for a
+# device; this may be used with UUID= as a more robust way to name devices
+# that works even if disks are added and removed. See fstab(5).
+#
+# systemd generates mount units based on this file, see systemd.mount(5).
+# Please run 'systemctl daemon-reload' after making changes here.
+#
+# <file system> <mount point>   <type>  <options>       <dump>  <pass>
+# / was on /dev/nvme0n1p8 during installation
+UUID=dc228daf-f4c2-4f44-8a78-51f1447130b6 /               ext4    errors=remount-ro 0       1
+# /boot/efi was on /dev/nvme0n1p5 during installation
+UUID=68A7-4C90  /boot/efi       vfat    umask=0077      0       1
+# swap was on /dev/nvme0n1p9 during installation
+UUID=22e008c7-4d52-44a9-9b85-29cf51160905 none            swap    sw              0       0
+
+# Jocuri Steam Windows (dual-boot NTFS) - adaugat 2026-10-03
+# KALI-C-KERNEL-NTFS (pana la 1 nov 2026): UUID=060A49400A492DCD  /mnt/windows  ntfs  uid=1000,gid=1000,umask=022,windows_names,noatime,errors=remount-ro,nofail,x-systemd.device-timeout=10  0  0
+UUID=060A49400A492DCD  /mnt/windows  ntfs-3g  uid=1000,gid=1000,umask=022,windows_names,big_writes,exec,noatime,nofail,x-systemd.device-timeout=10,X-fstrim.notrim  0  0
+UUID=2ECC00CDCC0090EF  /mnt/stuff    ntfs-3g  uid=1000,gid=1000,windows_names,big_writes,exec,nofail,x-systemd.device-timeout=10  0  0
+/home/mastermind/.local/share/steam-compat-c  /mnt/windows/Program\040Files\040(x86)/Steam/steamapps/compatdata  none  bind,nofail,x-systemd.requires=/mnt/windows  0  0
+
+# container ext4 pt jocuri Linux native (CS2), pe C: — 2026-10-28
+# KALI-JOCURI-VECHI (container pe C:, inlocuit 1 nov 2026): /mnt/windows/LinuxGames/kali-games.ext4 /mnt/games ext4 loop,noatime,nofail,x-systemd.requires-mounts-for=/mnt/windows 0 0
+# 31 oct: runtime-urile Linux Steam de pe C: tinute pe ext4 (driverul kernel ntfs lasa MFT agatat la stergerea
+# var/tmp-* si nu citeste symlink-urile Interix ale ntfs-3g). Vezi ~/src/kali-tune/bind-steam-runtimes.sh
+/home/mastermind/.local/share/steam-runtimes-c/SteamLinuxRuntime_4  /mnt/windows/Program\040Files\040(x86)/Steam/steamapps/common/SteamLinuxRuntime_4  none  bind,nofail,x-systemd.requires=/mnt/windows  0  0
+/home/mastermind/.local/share/steam-runtimes-c/SteamLinuxRuntime_sniper  /mnt/windows/Program\040Files\040(x86)/Steam/steamapps/common/SteamLinuxRuntime_sniper  none  bind,nofail,x-systemd.requires=/mnt/windows  0  0
+/home/mastermind/.local/share/steam-runtimes-c/SteamLinuxRuntime_soldier  /mnt/windows/Program\040Files\040(x86)/Steam/steamapps/common/SteamLinuxRuntime_soldier  none  bind,nofail,x-systemd.requires=/mnt/windows  0  0
+# Jocuri pe partitie ext4 nativa (din 1 nov 2026, inainte: container pe C:). Faza 2, ~/src/legion/faza2-jocuri-ext4.sh
+UUID=27279f6c-241f-49e0-af62-27c7f42187fb  /mnt/games  ext4  defaults,noatime,nofail,x-systemd.device-timeout=10  0  2
+# CS2-DOAR-EXT4 (15 nov 2026): Kali nu vede copia CS2 de pe C: (a Windows-ului) -> joaca de pe /mnt/games. ~/src/legion/cs2-doar-ext4-2026-11-15
+/etc/steam-ascuns/appmanifest-gol.acf  /mnt/windows/Program\040Files\040(x86)/Steam/steamapps/appmanifest_730.acf  none  bind,ro,nofail,x-systemd.requires=/mnt/windows,X-fstrim.notrim  0  0

@@ -1,0 +1,11 @@
+[Unit]
+Description=Thermal protection: cap i7-11800H package power (laptop gaming)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c "echo 45000000 > /sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw; echo 65000000 > /sys/class/powercap/intel-rapl:0/constraint_1_power_limit_uw"
+
+[Install]
+WantedBy=multi-user.target

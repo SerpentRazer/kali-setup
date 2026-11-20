@@ -1,0 +1,15 @@
+2 hypr/hyprland.lua
+2 hypr/keybinds.lua
+2 hypr/monitors.lua
+2 hypr/rules.lua
+0 kitty/kitty.conf
+21 quickshell/Bar.qml
+1 quickshell/PowerMenu.qml
+4 quickshell/SettingsPages/BarPage.qml
+1 quickshell/SettingsPages/NetworkPage.qml
+5 quickshell/SettingsPages/StoragePage.qml
+2 quickshell/SettingsPages/SystemPage.qml
+1 quickshell/SettingsWindow.qml
+1 quickshell/Theme.qml
+0 quickshell/VolumeOsd.qml
+0 rofi/config.rasi

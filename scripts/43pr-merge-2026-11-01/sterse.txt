@@ -1,0 +1,7 @@
+43pr/themes/white.toml
+cava/old
+cava/old.txt
+hypr/scripts/password-cursor.sh
+quickshell/SettingsPages/ConfigsPage.qml
+quickshell/SettingsPages/PowerPage.qml
+quickshell/Wheel.qml

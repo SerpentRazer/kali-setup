@@ -1,0 +1,63 @@
+@import "43pr-colors.css";
+/* CyberGlass: fundal frostat translucid pentru aplicatiile GTK, ca terminalul kitty.
+   Reteta corecta pt GTK: TOATE containerele interne -> transparent, si un SINGUR
+   strat translucid pe fereastra de nivel inalt. Altfel tema (Adwaita-dark) picteaza
+   un fundal opac sub .view si nu se vede blur-ul Hyprland.
+   Culorile vin din paleta motorului de teme 43pr (43pr-colors.css: @gtk_bg / @gtk_fg),
+   deci un preset deschis (white, light-gray...) face si aplicatiile GTK deschise.
+   Mai transparent = scade 0.70; opac = pune 1.0. Afecteaza toate aplicatiile GTK3. */
+
+/* 1) singurul strat translucid: fereastra de nivel inalt */
+window,
+window.background,
+window.csd,
+.background {
+    background-color: alpha(@gtk_bg, 0.70);
+    background-image: none;
+}
+
+/* 2) containerele interne nu mai adauga straturi opace -> lasa toplevel-ul sa transpara */
+.view,
+iconview,
+treeview.view,
+textview,
+textview text,
+treeview.view text,
+scrolledwindow,
+viewport,
+stack,
+box,
+paned,
+grid,
+notebook,
+notebook > *,
+headerbar,
+.titlebar,
+.toolbar,
+toolbar,
+.sidebar,
+.sidebar list,
+list,
+list row,
+row,
+separator {
+    background-color: transparent;
+    background-image: none;
+}
+
+/* 3) meniuri / dropdown-uri / tooltip raman opace ca sa fie lizibile */
+menu,
+.menu,
+popover,
+popover.background,
+tooltip,
+tooltip.background {
+    background-color: alpha(@gtk_bg, 0.94);
+    background-image: none;
+}
+
+/* 4) textul ia culoarea paletei peste tot */
+* {
+    color: @gtk_fg;
+}
+@import 'colors.css';

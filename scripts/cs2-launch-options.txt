@@ -1,0 +1,7 @@
+# Optiuni de lansare CS2 (Steam > CS2 > Properties > Launch Options). 1 nov 2026.
+
+# A) ACUM (prin gamescope; in joc apare „Fullscreen Windowed”, monitorul virtual „GAMESCOPE”):
+LD_PRELOAD= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GL_SHADER_DISK_CACHE_SIZE=12000000000 __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1 SDL_VIDEODRIVER=x11 /home/mastermind/.local/bin/cs2-perf /usr/games/gamescope --backend wayland -w 1440 -h 1080 -W 1920 -H 1080 -r 240 -S stretch -f --force-grab-cursor --immediate-flips -- env DISABLE_GAMESCOPE_WSI=1 %command% -nojoy +fps_max 0 +engine_low_latency_sleep_after_client_tick true
+
+# B) FARA gamescope (jocul vede direct Samsung-ul; in meniu alegi Fullscreen + 1440x1080 + Stretched):
+LD_PRELOAD= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only SDL_VIDEODRIVER=x11 /home/mastermind/.local/bin/cs2-perf %command% -nojoy -w 1440 -h 1080 +fps_max 0

@@ -1,0 +1,14 @@
+quickshell/Notifications.qml
+quickshell/QuickActions.qml
+quickshell/imgs/hibernate.png
+quickshell/imgs/hibernate2.png
+quickshell/imgs/lock.png
+quickshell/imgs/lock2.png
+quickshell/imgs/logout.png
+quickshell/imgs/logout2.png
+quickshell/imgs/reboot.png
+quickshell/imgs/reboot2.png
+quickshell/imgs/shutdown.png
+quickshell/imgs/shutdown2.png
+quickshell/imgs/suspend.png
+quickshell/imgs/suspend2.png

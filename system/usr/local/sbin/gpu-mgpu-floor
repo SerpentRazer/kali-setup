@@ -1,0 +1,63 @@
+#!/bin/sh
+# Podea de frecventa pentru GPU-urile laptopului hibrid: Intel randeaza, NVIDIA conduce monitorul extern (Samsung).
+# Fara ea, la fiecare cadru un GPU asteapta dupa celalalt (randare Intel -> copie pe NVIDIA), niciunul nu pare
+# ocupat si ambele raman la frecventa minima (Intel 350 MHz, NVIDIA 210 MHz) => Samsung-ul primea ~50-70 fps
+# la 240 Hz. Masurat 2026-10-17 cu ~/src/hzprobe.
+#   gpu-mgpu-floor auto    aplica doar daca e conectat un monitor pe NVIDIA (altfel reset, sa nu mance bateria)
+#   gpu-mgpu-floor apply | reset | status
+NV_MIN=900 # MHz, ales prin calibrare (cea mai mica valoare cu acelasi castig ca la 1200)
+NV_MAX=2100
+
+card_by_driver() { # $1 = i915 | nvidia
+    for c in /sys/class/drm/card*; do
+        case "$(basename "$c")" in *-*) continue ;; esac # sari peste conectori (card1-HDMI-A-2 etc.)
+        [ "$(basename "$(readlink -f "$c/device/driver")")" = "$1" ] && { echo "$c"; return; }
+    done
+}
+
+external_connected() { # orice iesire a placii NVIDIA cu monitor conectat
+    nv=$(card_by_driver nvidia)
+    [ -n "$nv" ] || return 1
+    for s in "$nv"-*/status; do
+        [ "$(cat "$s" 2> /dev/null)" = connected ] && return 0
+    done
+    return 1
+}
+
+apply() {
+    c=$(card_by_driver i915)
+    [ -n "$c" ] && cat "$c/gt_RP0_freq_mhz" > "$c/gt_min_freq_mhz"
+    # imediat dupa boot driverul NVIDIA poate inca lipsi
+    i=0
+    while [ $i -lt 30 ]; do
+        nvidia-smi -pm 1 > /dev/null 2>&1
+        nvidia-smi -lgc "$NV_MIN,$NV_MAX" > /dev/null 2>&1 && return 0
+        i=$((i + 1))
+        sleep 1
+    done
+    echo "gpu-mgpu-floor: nvidia-smi -lgc a esuat" >&2
+    return 1
+}
+
+reset() {
+    c=$(card_by_driver i915)
+    [ -n "$c" ] && cat "$c/gt_RPn_freq_mhz" > "$c/gt_min_freq_mhz"
+    nvidia-smi -rgc > /dev/null 2>&1
+    nvidia-smi -pm 0 > /dev/null 2>&1
+    return 0
+}
+
+status() {
+    c=$(card_by_driver i915)
+    echo "Intel ($c): min=$(cat "$c/gt_min_freq_mhz") max=$(cat "$c/gt_max_freq_mhz") acum=$(cat "$c/gt_act_freq_mhz") MHz"
+    echo "NVIDIA: $(nvidia-smi --query-gpu=persistence_mode,pstate,clocks.gr --format=csv,noheader)"
+    if external_connected; then echo "monitor extern pe NVIDIA: conectat"; else echo "monitor extern pe NVIDIA: nu"; fi
+}
+
+case "$1" in
+    auto) if external_connected; then apply; else reset; fi ;;
+    apply) apply ;;
+    reset) reset ;;
+    status) status ;;
+    *) echo "folosire: $0 auto|apply|reset|status" >&2; exit 2 ;;
+esac

@@ -1,0 +1,59 @@
+#!/bin/bash
+# Actualizare sistem Kali (1 nov 2026), dupa reteta sigura din 18 oct. Simularea fara root (liste private) a dat:
+# 730 upgrade, 19 noi, 7 eliminari (toate inlocuite de versiuni noi: libblosc2-7->9, libfalcosecurity0t64->0.23,
+# pyside/shiboken 6.10->6.11, libgvm22->23, postgresql-16/17-pg-gvm vechi; gvmd nou foloseste postgresql-18-pg-gvm).
+# NU se ating: kernel, nvidia (pin 610), kitty (patch scroll), aquamarine (patch mgpuwait), grub; HOLD: hyprland,
+# hyprland-guiutils (existente) + quickshell (nou, 0.3.2 netestat cu bara 43PR). Restart la final (libc6 2.43-7).
+# Ruleaza intr-un terminal kitty (nu prin Claude, ca sa nu-l taie un timeout):
+#   pkexec /bin/bash /home/mastermind/src/legion/update-sistem.sh
+set -u
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=l NEEDRESTART_SUSPEND=1      # needrestart doar listeaza, nu reporneste servicii (sesiunea!)
+[ "$(id -u)" = 0 ] || { echo "Ruleaza cu pkexec."; exit 1; }
+B=/home/mastermind/.config-backups/pre-update-$(date +%Y-%m-%d_%H-%M-%S); mkdir -p $B
+exec > >(tee -a "$B/log.txt") 2>&1
+trap 'chown -R mastermind:mastermind $B' EXIT
+die() { echo; echo "STOP: $*"; echo "Nimic nu s-a instalat dupa acest punct. Log: $B/log.txt"; exit 1; }
+EXPECT_REMOVE="libblosc2-7 libfalcosecurity0t64 libgvm22t64 libpyside6-py3-6.10 libshiboken6-py3-6.10 postgresql-16-pg-gvm postgresql-17-pg-gvm"
+GUARD='^(linux-image|linux-headers|nvidia|libnvidia|kitty|libaquamarine|aquamarine|quickshell|grub|hyprland)'
+
+echo "== 1. verificari"
+pgrep -x cs2 >/dev/null && die "CS2 ruleaza"
+fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1 && die "alt apt/dpkg ruleaza"
+[ -z "$(dpkg --audit 2>&1)" ] || { dpkg --audit; die "dpkg --audit are probleme"; }
+free=$(df --output=avail -BG / | tail -1 | tr -dc 0-9); [ "$free" -ge 6 ] || die "doar ${free}G liberi pe /"
+echo "  ok (liber pe /: ${free}G)"
+
+echo "== 2. backup"
+tar -czf $B/etc.tar.gz -C / etc 2>/dev/null; dpkg --get-selections > $B/selectii.txt; apt-mark showhold > $B/hold-inainte.txt
+sha256sum /usr/lib/x86_64-linux-gnu/libaquamarine.so* $(find /usr/lib/kitty -name '*.so' 2>/dev/null) 2>/dev/null > $B/sha-inainte.txt
+cat > $B/revino-apt.sh <<EOF
+#!/bin/bash
+# NU face downgrade automat. Readuce doar /etc si hold-urile; pachetele vechi: /var/cache/apt/archives sau snapshot.debian.org.
+[ "\$(id -u)" = 0 ] || exit 1
+apt-mark unhold quickshell; tar -xzf $B/etc.tar.gz -C / etc/apt; echo "readus /etc/apt + hold-uri; vezi $B/selectii.txt"
+EOF
+echo "  $B"
+
+echo "== 3. hold quickshell (bara 43PR) + liste noi"
+apt-mark hold quickshell
+apt-get update; rc=$?
+[ $rc -eq 0 ] || echo "  ATENTIE: apt-get update a iesit cu $rc (verific mai jos ce urmeaza sa se instaleze)"
+
+echo "== 4. simulare de control"
+apt-get -s full-upgrade > $B/simulare.txt 2>&1 || die "simularea a esuat (vezi $B/simulare.txt)"
+grep -E '^[0-9]+ upgraded' $B/simulare.txt
+rem=$(awk '/^Remv /{print $2}' $B/simulare.txt | sort | tr '\n' ' ')
+for p in $rem; do case " $EXPECT_REMOVE " in *" $p "*) ;; *) die "eliminare neasteptata: $p";; esac; done
+bad=$(awk '/^Inst /{print $2}' $B/simulare.txt | grep -E "$GUARD" | tr '\n' ' ')
+[ -z "$bad" ] || die "ar atinge pachete protejate: $bad"
+echo "  eliminari: ${rem:-niciuna} | pachete protejate: neatinse"
+
+echo "== 5. actualizare (cateva minute)"
+apt-get -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold full-upgrade || die "full-upgrade a esuat"
+
+echo "== 6. verificari dupa"
+[ -z "$(dpkg --audit 2>&1)" ] && echo "  dpkg --audit: curat" || dpkg --audit
+sha256sum -c --quiet $B/sha-inainte.txt && echo "  aquamarine + kitty: neschimbate" || echo "  ATENTIE: un fisier patch-uit s-a schimbat"
+echo "  hold: $(apt-mark showhold | tr '\n' ' ')"
+echo; echo "GATA. Fa RESTART (libc6). Log + backup: $B"

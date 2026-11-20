@@ -1,0 +1,70 @@
+Description: mgpu: wait for the blit fence when KMS gets no IN_FENCE_FD (violet squares on Intel->NVIDIA)
+Author: local Kali build (port of 0.14.0 mgpuwait to 0.16.0)
+Forwarded: no
+---
+--- a/src/backend/drm/DRM.cpp	2026-11-01 20:07:09.000000000 +0200
++++ b/src/backend/drm/DRM.cpp	2026-11-15 19:34:15.442289945 +0200
+@@ -22,6 +22,7 @@
+ #include <sys/mman.h>
+ #include <fcntl.h>
+ #include <unistd.h>
++#include <poll.h>
+ extern "C" {
+ #include <libseat.h>
+ #include <libudev.h>
+@@ -47,6 +48,16 @@
+ using namespace Aquamarine;
+ using namespace Hyprutils::Memory;
+ using namespace Hyprutils::Math;
++
++// KMS will not wait for a blit whose fence we don't hand it (no IN_FENCE_FD, e.g. NVIDIA < 555).
++// Block until the secondary GPU is done, or scanout catches the buffer mid-draw: the blit
++// clears to magenta first, which shows up as flickering violet squares.
++static void waitForBlitFence(std::optional<int> fd) {
++    if (!fd.has_value() || *fd < 0)
++        return;
++    pollfd pfd = {.fd = *fd, .events = POLLIN, .revents = 0};
++    poll(&pfd, 1, 50);
++}
+ #define SP CSharedPointer
+ 
+ static bool shouldSubmitCTM(SP<SDRMConnector> connector, const COutputState::SInternalState& state, bool modeset) {
+@@ -2709,8 +2720,10 @@
+             static auto NO_EXPLICIT = envEnabled("AQ_MGPU_NO_EXPLICIT");
+             if (blitResult.syncFD.has_value() && !NO_EXPLICIT && (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE))
+                 data.outputState.explicitInFence = blitResult.syncFD.value();
+-            else
++            else {
++                waitForBlitFence(blitResult.syncFD);
+                 data.outputState.explicitInFence = -1;
++            }
+ 
+             drmFB = CDRMFB::create(NEWAQBUF, backend, nullptr); // will return attachment if present
+         } else {
+@@ -2969,10 +2982,12 @@
+             SP<Aquamarine::CDRMRenderer> primaryRenderer;
+             if (backend->primary)
+                 primaryRenderer = backend->primary->rendererState.renderer;
+-            if (!backend->rendererState.renderer->blit(buffer, NEWAQBUF, primaryRenderer).success) {
++            auto cursorBlit = backend->rendererState.renderer->blit(buffer, NEWAQBUF, primaryRenderer);
++            if (!cursorBlit.success) {
+                 backend->backend->log(AQ_LOG_ERROR, "drm: Backend requires blit, but cursor blit failed");
+                 return false;
+             }
++            waitForBlitFence(cursorBlit.syncFD);
+ 
+             fb = CDRMFB::create(NEWAQBUF, backend, nullptr); // will return attachment if present
+         } else
+--- a/src/backend/drm/Renderer.cpp	2026-11-01 20:07:09.000000000 +0200
++++ b/src/backend/drm/Renderer.cpp	2026-11-15 19:34:15.432950743 +0200
+@@ -1177,6 +1177,10 @@
+     // as implicit is not guaranteed at all
+     int explicitFD = recreateBlitSync();
+ 
++    // no fence to wait on later: finish now, so the magenta clear never reaches scanout
++    if (explicitFD == -1)
++        glFinish();
++
+     GLCALL(glBindFramebuffer(GL_FRAMEBUFFER, 0));
+     GLCALL(glBindRenderbuffer(GL_RENDERBUFFER, 0));
+ 

@@ -1,0 +1,11 @@
+1 hypr/hyprland.lua
+2 hypr/keybinds.lua
+10 quickshell/Bar.qml
+0 quickshell/PowerMenu.qml
+3 quickshell/SettingsPages/BarPage.qml
+0 quickshell/SettingsPages/KeybindsPage.qml
+0 quickshell/SettingsPages/StoragePage.qml
+1 quickshell/SettingsWindow.qml
+0 quickshell/SidePanel.qml
+0 quickshell/Theme.qml
+1 quickshell/VolumeOsd.qml

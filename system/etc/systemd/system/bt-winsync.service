@@ -1,0 +1,13 @@
+[Unit]
+Description=Sincronizeaza cheile Bluetooth intre Kali si Windows (dual boot)
+Wants=mnt-windows.mount
+After=mnt-windows.mount
+Before=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bt-winsync boot
+TimeoutStartSec=30
+
+[Install]
+WantedBy=bluetooth.service

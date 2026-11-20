@@ -1,0 +1,5 @@
+hypr/scripts/live-wallpaper-pause.sh
+quickshell/CustomizationSettings.qml
+quickshell/Notifications.qml
+quickshell/RingGauge.qml
+quickshell/ValueSlider.qml

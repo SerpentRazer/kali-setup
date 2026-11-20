@@ -1,0 +1,147 @@
+-- ~/.config/hypr/hyprland.lua
+-- Docs: https://wiki.hypr.land/Configuring/Start/
+
+---- MY PROGRAMS ----
+
+mainMod    = "SUPER"
+terminal   = "kitty"
+menu       = "rofi -show drun"
+fileManager = "thunar"
+browser    = "brave-browser"
+
+---- AUTOSTART ----
+
+hl.on("hyprland.start", function()
+    hl.exec_cmd("tail -F -n +1 $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/hyprland.log > ~/.cache/hyprland/last-session.log")
+    -- waybar si dunst sunt inlocuite de quickshell (Bar.qml, Notifications.qml). Meniul de power e iar wlogout
+    -- (hypr/scripts/wlogout.sh, cerut 17 oct); PowerMenu.qml ramane incarcat, dar nu-l mai deschide nimic.
+    hl.exec_cmd("nm-applet")
+    hl.exec_cmd("rfkill unblock bluetooth") -- IdeaPad boots BT soft-blocked; unblock so the toggle works
+    hl.exec_cmd("wl-paste --type text --watch cliphist store")
+    hl.exec_cmd("wl-paste --type image --watch cliphist store")
+    hl.exec_cmd("/usr/lib/x86_64-linux-gnu/libexec/polkit-kde-authentication-agent-1")
+
+    -- Pe Wayland, GTK3 (Thunar, nwg-look...) citeste tema din gsettings, NU din settings.ini.
+    -- Fara asta Thunar lua Kali-Purple-Dark/Flat-Remix ramase de la Xfce/Plasma.
+    -- Scrie in baza dconf proprie Hyprland (vezi DCONF_PROFILE mai jos), nu in cea a Xfce/Plasma.
+    -- gtk-theme + color-scheme vin din motorul de teme 43pr (theme.py apply), ca un preset deschis
+    -- (white, light-gray...) sa nu fie fortat inapoi pe Adwaita-dark la fiecare login.
+    hl.exec_cmd("gsettings set org.gnome.desktop.interface icon-theme Papirus-Dark; gsettings set org.gnome.desktop.interface font-name 'Geist 11'; gsettings set org.gnome.desktop.interface document-font-name 'Geist 11'; gsettings set org.gnome.desktop.interface monospace-font-name 'GeistMono Nerd Font 10'; python3 ~/.config/43pr/bin/theme.py apply >/dev/null")
+
+    -- D-Bus/systemd nu mostenesc DCONF_PROFILE, deci aplicatiile activate prin D-Bus
+    -- (ex. daemonul Thunar / org.freedesktop.FileManager1) citeau profilul dconf IMPLICIT
+    -- (Kali-Purple-Dark + iconite albastre) in loc de cel Hyprland (Adwaita-dark + Papirus).
+    -- Impinge DCONF_PROFILE in env-ul de activare => Thunar arata ca restul desktop-ului.
+    hl.exec_cmd("dbus-update-activation-environment --systemd DCONF_PROFILE")
+
+    hl.exec_cmd("awww-daemon")
+    hl.exec_cmd("~/.config/hypr/scripts/wallpaper-restore.sh") -- wallpaper-ul salvat de theme.py (picker-ul SUPER+W)
+    hl.exec_cmd("sleep 2 && QSG_RENDER_LOOP=basic qs")
+    -- Notificarile le tine acum quickshell. Pe Kali D-Bus poate porni singur dunst / xfce4-notifyd
+    -- daca vine o notificare in cele 2s de dinainte de qs; qs ar astepta atunci la nesfarsit.
+    -- Le oprim dupa ce qs a pornit -> qs preia numele automat (testat: "Registration will be
+    -- attempted again if the active service is unregistered").
+    hl.exec_cmd("sh -c 'sleep 6; pkill -x dunst; pkill -x xfce4-notifyd'")
+end)
+
+---- ENVIRONMENT VARIABLES ----
+
+-- Baza dconf separata (~/.config/dconf/hyprland): tema GTK a Hyprland nu se mai scurge in Xfce/Plasma.
+-- Testat: cu profilul asta GTK pe Wayland vede Adwaita-dark/Papirus-Dark, fara el Kali-Purple-Dark.
+hl.env("DCONF_PROFILE", os.getenv("HOME") .. "/.config/hypr/dconf-profile")
+
+hl.env("XCURSOR_SIZE", "14")
+hl.env("QT_QPA_PLATFORM", "wayland")
+hl.env("MOZ_ENABLE_WAYLAND", "1")
+
+-- Laptop hibrid: Intel UHD (card0) conduce eDP-1, NVIDIA RTX 3060 (card1) conduce HDMI-A-2.
+-- Hyprland are nevoie de ambele GPU-uri ca sa mearga si ecranul intern si cel extern.
+-- Numerotarea card0/card1 se poate schimba intre boot-uri, deci rezolvam caile by-path.
+-- NU punem caile by-path direct: contin ":" iar AQ_DRM_DEVICES e separat tot prin ":".
+-- (ordinea GPU-urilor: vezi mai jos)
+local function drm_card(by_path, fallback)
+  local ok, dev = pcall(function()
+    local f = io.popen("readlink -f " .. by_path)
+    local out = f:read("*l")
+    f:close()
+    return out
+  end)
+  if ok and dev and dev:match("^/dev/dri/card%d+$") then return dev end
+  return fallback
+end
+-- Primul GPU din lista = cel care randeaza. Implicit Intel.
+-- Incercat pe 2026-09-30: NVIDIA primul (ca sa scap de patratele care palpaie pe Samsung)
+-- -> Hyprland crapa la PORNIRE (ABRT in Mesa dri_create_fence_fd, din Aquamarine
+-- CDRMRenderer::recreateBlitSync, la copia spre eDP-1) = login imposibil. Nu reactiva orbeste.
+-- Experiment NVIDIA-primul: `touch ~/.config/hypr/nvidia-primary`, apoi logout/login.
+local INTEL  = drm_card("/dev/dri/by-path/pci-0000:00:02.0-card", "/dev/dri/card0")
+local NVIDIA = drm_card("/dev/dri/by-path/pci-0000:01:00.0-card", "/dev/dri/card1")
+-- SIGURANTA: flag-ul nvidia-primary e ONE-SHOT. Il citim si il STERGEM imediat, in
+-- faza de parsare a configului (ruleaza INAINTE de init-ul backend-ului DRM, unde a
+-- crapat pe 2026-09-30 in recreateBlitSync). Astfel, daca login-ul cu NVIDIA-primar
+-- esueaza, un simplu REBOOT revine automat la Intel-primar (flag-ul e deja sters) =>
+-- fara blocare permanenta la login. Daca testul merge si vrei permanent, re-touch.
+local nvidia_primary = io.open(os.getenv("HOME") .. "/.config/hypr/nvidia-primary", "r")
+if nvidia_primary then
+  nvidia_primary:close()
+  os.remove(os.getenv("HOME") .. "/.config/hypr/nvidia-primary")
+  hl.env("AQ_DRM_DEVICES", NVIDIA .. ":" .. INTEL)
+else
+  hl.env("AQ_DRM_DEVICES", INTEL .. ":" .. NVIDIA)
+end
+
+-- Patrate violet/roz pe Samsung (HDMI-A-2, NVIDIA): Intel randeaza in buffere COMPRIMATE
+-- (Y_TILED_GEN12_RC_CCS_CC), iar la copia spre NVIDIA blocurile comprimate ajung ca gunoi colorat.
+-- 1) copia intre GPU-uri in format liniar (necomprimat)
+hl.env("AQ_FORCE_LINEAR_BLIT", "1")
+-- 2) fara explicit sync pe copia multi-GPU: NVIDIA 550 nu-l suporta la KMS
+hl.env("AQ_MGPU_NO_EXPLICIT", "1")
+-- 3) plan B, doar daca 1+2 nu ajung: `touch ~/.config/hypr/intel-noccs` (opreste compresia Intel peste tot)
+local noccs = io.open(os.getenv("HOME") .. "/.config/hypr/intel-noccs", "r")
+if noccs then
+  noccs:close()
+  hl.env("INTEL_DEBUG", "noccs")
+end
+
+-- Brave / VSCodium (Electron) sa porneasca nativ pe Wayland
+hl.env("ELECTRON_OZONE_PLATFORM_HINT", "auto")
+
+---- INPUT ----
+
+hl.config({
+    input = {
+        kb_layout = "us,latam",
+        follow_mouse = 1,
+        sensitivity = 0.5,
+        touchpad = {
+            natural_scroll = true,
+            tap_to_click = true,
+        },
+    },
+})
+
+-- LAYOUT
+hl.config({
+    dwindle = { preserve_split = true },
+})
+hl.config({
+    master = { new_status = "master" },
+})
+
+-- MISC
+hl.config({
+    misc = {
+        disable_hyprland_logo = true,
+        disable_splash_rendering = true,
+    },
+})
+
+---- SPLIT-OUT FILES ----
+
+require("monitors")
+require("keybinds")
+require("look")
+require("rules")
+
+-- HyprMod managed settings
+require("hyprland-gui")

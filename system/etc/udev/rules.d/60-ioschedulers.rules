@@ -1,0 +1,3 @@
+# Din CachyOS-Settings/Bazzite: kyber tine latenta citirilor mica si cand ruleaza scrieri mari in fundal.
+# sda (SSD SATA) ramane pe mq-deadline, ca si in CachyOS.
+ACTION=="add|change", KERNEL=="nvme[0-9]n[0-9]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="kyber"

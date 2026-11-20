@@ -1,0 +1,81 @@
+-- ~/.config/hypr/rules.lua
+-- Migrated from rules.conf
+-- Docs: https://wiki.hypr.land/Configuring/Basics/Window-Rules/
+
+hl.layer_rule({
+    match = { namespace = "rofi" },
+    blur = true,
+    ignore_alpha = 0.15,
+})
+
+-- blur the dunst notifications so they match the translucent terminal
+hl.layer_rule({
+    match = { namespace = "notifications" },
+    blur = true,
+    ignore_alpha = 0.2,
+})
+
+-- blur behind the quickshell music preview card (MusicPreview.qml)
+hl.layer_rule({
+    match = { namespace = "qs-music" },
+    blur = true,
+    ignore_alpha = 0.1,
+})
+
+-- Opacity rules: 90% for all windows except fullscreen
+hl.window_rule({
+    match = { class = ".*" },
+    opacity = "0.9 override",
+})
+
+hl.window_rule({
+    match = { class = ".*", fullscreen = true },
+    opacity = "1.0 override",
+})
+
+-- Video players: always opaque, fullscreen included (the rules above left
+-- fullscreen players at 0.9). Classes of every player installed here:
+-- mpv, VLC (XWayland), Dragon Player, Parole + its separate "GStreamer"
+-- video window, ffplay. content = "video" catches any app that reports
+-- video via wp-content-type.
+hl.window_rule({
+    name = "opaque-video-players",
+    match = { class = "^(mpv|vlc|org\\.kde\\.dragonplayer|parole|GStreamer|ffplay)$" },
+    opacity = "1.0 override",
+})
+
+hl.window_rule({
+    name = "opaque-video-content",
+    match = { content = "video" },
+    opacity = "1.0 override",
+})
+
+hl.window_rule({
+    name = "float-pavucontrol",
+    match = { class = "^(pavucontrol)$" },
+    float = true,
+})
+
+hl.window_rule({
+    name = "float-nm-connection-editor",
+    match = { class = "^(nm-connection-editor)$" },
+    float = true,
+})
+
+hl.window_rule({
+    name = "float-blueman-manager",
+    match = { class = "^(blueman-manager)$" },
+    float = true,
+})
+
+hl.window_rule({
+    name = "float-open-file",
+    match = { title = "^(Open File)$" },
+    float = true,
+})
+
+hl.window_rule({
+    name = "float-save-file",
+    match = { title = "^(Save File)$" },
+    float = true,
+})

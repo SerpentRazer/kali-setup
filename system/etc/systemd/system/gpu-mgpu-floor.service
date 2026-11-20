@@ -1,0 +1,12 @@
+[Unit]
+Description=GPU frequency floor (Intel+NVIDIA) while an external monitor hangs off the NVIDIA card
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/gpu-mgpu-floor auto
+ExecStop=/usr/local/sbin/gpu-mgpu-floor reset
+
+[Install]
+WantedBy=multi-user.target

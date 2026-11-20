@@ -1,0 +1,3 @@
+# Monitor conectat/deconectat (hotplug DRM) -> podeaua de frecventa GPU urmeaza starea. Vezi gpu-mgpu-floor.service.
+# if/then (nu &&): la boot regula ruleaza inainte de serviciu si `is-active` iesea cu 3 = eroare falsa in jurnal (1 nov 2026).
+ACTION=="change", SUBSYSTEM=="drm", ENV{HOTPLUG}=="1", RUN+="/bin/sh -c 'if systemctl is-active --quiet gpu-mgpu-floor.service; then /usr/local/sbin/gpu-mgpu-floor auto; fi; exit 0'"

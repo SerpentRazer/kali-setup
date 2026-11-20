@@ -1,0 +1,579 @@
+--- base/quickshell/Bar.qml	2026-11-15 19:04:33.615323207 +0200
++++ local/quickshell/Bar.qml	2026-11-01 18:49:46.490635469 +0200
+@@ -1,3 +1,12 @@
++// Bar.qml — upstream 43PR bar (c998d6d, 31 oct 2026) + Kali/laptop additions (merge 1 nov 2026):
++//   • GPU module fed by one long-lived `nvidia-smi -lms` on NVIDIA (upstream spawns sh + nvidia-smi every 2 s)
++//   • click on CPU / GPU / RAM opens the Task Manager (KDE System Monitor)
++//   • GPU-smooth hover zoom on every module (scale transform, no reflow), capped inside its panel
++//   • each bar shows only the workspaces of its own monitor (Bar settings → "Workspaces per monitor")
++//   • media pill opens the MusicPreview card (looks like the VolumeOsd media popup, sound waves);
++//     marquee scrolls pixel-smooth (Marquee.qml)
++//   • system tray (Discord, Steam, nm-applet...): app icons, menu in the bar's style (TrayMenu.qml)
++//   • power button = wlogout; defaults = this machine's layout (top, floating, CPU/GPU/RAM visible)
+ import QtQuick
+ import QtQuick.Layouts
+ import QtQuick.Effects
+@@ -7,6 +16,8 @@
+ import Quickshell.Hyprland
+ import Quickshell.Services.Pipewire
+ import Quickshell.Services.UPower
++import Quickshell.Widgets
++import Quickshell.Services.SystemTray
+ 
+ Scope {
+     id: root
+@@ -14,11 +25,14 @@
+     // ───────────────────────── Config ─────────────────────────
+     // Single source of truth for defaults (used by the adapter AND reset).
+     readonly property var defaults: ({
++        // Kali defaults (upstream: left / joined / thickness 20 / radius 16 / stats hidden)
+         // layout
+-        position: "left", style: "joined", thickness: 20, margin: 4,
++        position: "top", style: "floating", thickness: 24, margin: 4,
+         reserveSpace: true, allScreens: true, dragModules: true,
+         // appearance
+-        scale: 1.0, barScale: 1.0, bgOpacity: 0.5, border: false, radius: 16, calRadius: 15, calScale: 1.0,
++        scale: 1.0, barScale: 1.0, bgOpacity: 0.5, border: false, radius: 10, calRadius: 15, calScale: 1.0,
++        // Kali
++        hoverZoom: true, wsPerMonitor: true, statsMainOnly: true,
+         // tooltips
+         tooltips: true, tooltipHints: true, tipDelay: 450,
+         // modules
+@@ -32,10 +46,10 @@
+         // settings button click binds: "quickactions" | "settings" | "barsettings" | "none"
+         settingsPrimary: "settings", settingsSecondary: "barsettings", settingsTertiary: "none",
+         // module placement
+-        hidden: "cpu,ram,gpu,temp,wall,settings,tasks",
+-        startMods: "cpu,ram,gpu,temp,ws",
++        hidden: "wall,settings,tasks",
++        startMods: "cpu,gpu,ram,temp,ws",
+         centerMods: "clock",
+-        endMods: "media,volume,battery,net,notif,wall,settings,power"
++        endMods: "media,tray,volume,battery,net,notif,wall,settings,power"
+     })
+     readonly property var positions: ["top", "right", "bottom", "left"]
+     readonly property var styles: ["floating", "joined", "strip"]
+@@ -44,6 +58,13 @@
+     // Live config object, edited by BarPage (the settings page).
+     readonly property var config: cfg
+ 
++    // Kali
++    readonly property real hoverScale: 1.15
++    // extra transparent room on the inner side of the bar so a zoomed module isn't clipped
++    readonly property int zoomPad: cfg.hoverZoom ? 4 : 0
++    readonly property string taskManager: Quickshell.env("HOME") + "/.config/hypr/scripts/open-taskmanager.sh"
++    readonly property var trayHidden: ["nm-applet"]   // tray icons the bar already has a module for
++
+     Component.onCompleted: BluetoothState.init()
+ 
+     FileView {
+@@ -67,6 +88,9 @@
+             property real barScale: root.defaults.barScale           // whole-bar scale (thickness, margins, padding, dots, text)
+             property real bgOpacity: root.defaults.bgOpacity
+             property bool border: root.defaults.border
++            property bool hoverZoom: root.defaults.hoverZoom     // Kali: modules grow a bit under the pointer
++            property bool wsPerMonitor: root.defaults.wsPerMonitor // Kali: each bar shows only its monitor's workspaces
++            property bool statsMainOnly: root.defaults.statsMainOnly // Kali: CPU / GPU / RAM / TEMP only on the main monitor
+             property int radius: root.defaults.radius            // bar corner radius
+             property int calRadius: root.defaults.calRadius      // calendar popup corner radius
+             property real calScale: root.defaults.calScale       // calendar popup scale
+@@ -142,7 +166,7 @@
+         if (cfg.position === side) return effEdge;
+         const alongBar = vertical ? (side === "top" || side === "bottom")
+                                   : (side === "left" || side === "right");
+-        return alongBar ? effGap : 0;
++        return alongBar ? effGap : zoomPad;   // Kali: inner side = room for the hover zoom
+     }
+ 
+     // ───────────────────────── App icon resolution ─────────────────────────
+@@ -266,6 +290,7 @@
+         { id: "ws",       l: "Workspaces" },
+         { id: "tasks",    l: "Open apps" },
+         { id: "media",    l: "Media" },
++        { id: "tray",     l: "System tray" },
+         { id: "volume",   l: "Volume" },
+         { id: "battery",  l: "Battery" },
+         { id: "net",      l: "Network",       cmd: "qs ipc call settings network",
+@@ -276,22 +301,24 @@
+                                               tip: "Wallpapers", hint: "Open wallpaper picker" },
+         { id: "settings", l: "Settings",      cmd: "qs ipc call settings toggle", g: "\uDB81\uDC93",
+                                               tip: "Settings", hint: "Open settings" },
+-        { id: "power",    l: "Power",         cmd: "qs ipc call powermenu toggle", g: "\u23FB",
++        { id: "power",    l: "Power",         cmd: "$HOME/.config/hypr/scripts/wlogout.sh", g: "\u23FB", // Kali: wlogout; qs: "qs ipc call powermenu toggle"
++                                             
+                                               tip: "Power menu", hint: "Open", fixed: true }
+     ]
+     readonly property var moduleIds: moduleDefs.map(d => d.id)
+     readonly property var defMap: moduleDefs.reduce((m, d) => { m[d.id] = d; return m; }, {})
+     readonly property var comps: ({
+         cpu: cpuC, ram: ramC, gpu: gpuC, temp: tempC,
+-        ws: wsC, tasks: tasksC, media: mediaC, volume: volumeC, battery: batteryC, icon: iconC
++        ws: wsC, tasks: tasksC, media: mediaC, tray: trayC, volume: volumeC, battery: batteryC, icon: iconC
+     })
+ 
+-    // The old combined "stats" module is migrated to "cpu" + "ram" in saved configs.
++    // The old combined "stats" module is migrated to "cpu" + "gpu" + "ram" in saved configs
++    // (Kali: our old stats module showed the GPU too; upstream migrates to cpu + ram only).
+     function csv(str) {
+         if (str === "") return [];
+         const out = [];
+         for (const x of str.split(","))
+-        x === "stats" ? out.push("cpu", "ram") : out.push(x);
++        x === "stats" ? out.push("cpu", "gpu", "ram") : out.push(x);
+         return out;
+     }
+     function valid(id) { return moduleIds.indexOf(id) >= 0; }
+@@ -310,10 +337,25 @@
+         switch (id) {
+         case "media":   return Marquee.player !== null && Marquee.title !== "";
+         case "battery": return battery !== null;
++        case "tray":    return trayModel.count > 0;
+         default:        return true;
+         }
+     }
+ 
++    // Kali: the resource stats (CPU / GPU / RAM / TEMP) live only on the main monitor = the screen at 0,0
++    // (the Samsung in monitors.lua; the laptop sits at -1920,0). Laptop alone → it is the only screen → stats there.
++    readonly property var statMods: ["cpu", "gpu", "ram", "temp"]
++    readonly property string mainScreen: {
++        const l = Quickshell.screens;
++        const m = l.find(sc => sc.x === 0 && sc.y === 0) ?? l[0];
++        return m ? m.name : "";
++    }
++    function modVisibleOn(id, screenName) {
++        if (cfg.statsMainOnly && statMods.indexOf(id) >= 0 && Quickshell.screens.length > 1
++                && screenName !== "" && screenName !== mainScreen) return false;
++        return modVisible(id);
++    }
++
+     // sections
+     readonly property var startList: csv(cfg.startMods).filter(valid)
+     readonly property var centerList: {
+@@ -646,9 +688,36 @@
+         onTriggered: { statFile.reload(); memFile.reload(); }
+     }
+     // GPU usage / temps (only while the GPU or temperature module is enabled)
++    // Kali: on NVIDIA one long-lived `nvidia-smi -lms 2000` feeds the same updateGpuFromProbe()
++    // (measured 16 oct on the RTX 3060: ~0.1% CPU vs ~1% for spawning sh + nvidia-smi every 2 s).
++    // If nvidia-smi is missing / keeps dying without output (3x), the upstream probe takes over.
++    readonly property bool gpuWanted: root.barVisible && (root.isOn("gpu") || root.isOn("temp"))
++    property bool nvLive: false
++    property int nvFails: 0
++    readonly property bool nvOk: nvFails < 3
++    Process {
++        id: nvProc
++        command: ["nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu",
++                  "--format=csv,noheader,nounits", "-lms", "2000"]
++        stdout: SplitParser {
++            onRead: data => {
++                const f = data.split(",").map(s => parseInt(s));
++                if (isNaN(f[0])) return;
++                root.nvLive = true;
++                root.updateGpuFromProbe(f[0] + " " + (isNaN(f[1]) ? "-" : f[1]));
++            }
++        }
++        onExited: { if (!root.nvLive) root.nvFails++; root.nvLive = false; }
++    }
++    onGpuWantedChanged: if (!gpuWanted) nvProc.running = false
++    Timer {   // starts it, and restarts it if it ever dies (driver reload)
++        interval: 10000; repeat: true; triggeredOnStart: true
++        running: root.gpuWanted && root.nvOk
++        onTriggered: if (!nvProc.running) nvProc.running = true
++    }
+     Timer {
+         interval: 2000; repeat: true; triggeredOnStart: true
+-        running: root.barVisible && (root.isOn("gpu") || root.isOn("temp"))
++        running: root.gpuWanted && !root.nvOk
+         onTriggered: { if (!gpuProc.running) gpuProc.running = true; }
+     }
+     Timer {
+@@ -663,8 +732,43 @@
+ 
+     PwObjectTracker { objects: [Pipewire.defaultAudioSink] }
+ 
+-    Process { id: runner }
+-    function run(cmd) { runner.command = ["sh", "-c", cmd]; runner.running = true; }
++    // ───────────────────────── System tray (Kali) ─────────────────────────
++    // The tray module repeats over trayModel, not over SystemTray.items: a Repeater on the live list
++    // deletes an icon the moment its app quits, so it could never animate out. Here an app that goes
++    // away is only marked `leaving`, its icon shrinks / fades, and trayGc drops it afterwards.
++    // Keys are numbers handed out per SystemTrayItem (the same object always gets the same key).
++    ListModel { id: trayModel }          // roles: key (int), leaving (bool)
++    property int _trayNext: 0
++    property var _trayKeys: new Map()
++    function trayKeyOf(item) {
++        if (!_trayKeys.has(item)) _trayKeys.set(item, ++_trayNext);
++        return _trayKeys.get(item);
++    }
++    function trayItemOf(key) { return trayLive.find(i => trayKeyOf(i) === key) ?? null; }
++    readonly property var trayLive: SystemTray.items.values.filter(i => trayHidden.indexOf(i.id) < 0)
++    onTrayLiveChanged: {
++        const live = trayLive.map(trayKeyOf);
++        const have = [];
++        for (let i = 0; i < trayModel.count; i++) {
++            const e = trayModel.get(i);
++            have.push(e.key);
++            if (!e.leaving && live.indexOf(e.key) < 0) trayModel.setProperty(i, "leaving", true);
++        }
++        for (const k of live)
++            if (have.indexOf(k) < 0) trayModel.append({ key: k, leaving: false });
++        trayGc.restart();
++    }
++    Timer {
++        id: trayGc
++        interval: Theme.animMed + 80
++        onTriggered: {
++            for (let i = trayModel.count - 1; i >= 0; i--)
++                if (trayModel.get(i).leaving) trayModel.remove(i);
++        }
++    }
++
++    // Kali: detached — two quick clicks never drop a command (a single shared Process would)
++    function run(cmd) { Quickshell.execDetached(["sh", "-c", cmd]); }
+ 
+     function mediaAct(kind) {
+         const p = Marquee.player;
+@@ -780,7 +884,8 @@
+                 Rectangle {
+                     anchors.fill: parent
+                     radius: Math.min(cfg.radius, height / 2)
+-                    color: root.bgColor
++                    // Kali: popups get no blur, so at the bar's 50% the text behind bled through
++                    color: Qt.alpha(Theme.bg, Math.max(cfg.bgOpacity, 0.88))
+                     border.width: 1
+                     border.color: root.borderColor
+ 
+@@ -850,6 +955,31 @@
+         opacity: disabled ? 0.4 : 1
+         Behavior on opacity { NumberAnimation { duration: 120 } }
+ 
++        // Kali — hover zoom: a scale transform, so it animates at the display's refresh rate and the
++        // neighbours never reflow (animating font-size would jump in whole pixels).
++        // Capped so the zoomed module stays inside its black panel: a wide module at the panel's
++        // end (media pill, CPU, clock) only grows into the panel's padding instead of spilling out.
++        property real zoomTo: root.hoverScale
++        function fitZoom() {
++            let p = parent;
++            while (p && p.lane === undefined) p = p.parent;     // the Panel holding this module
++            if (!p) return root.hoverScale;
++            if (root.joined) p = p.parent;                      // joined / strip: one background for the whole bar
++            const o = mapToItem(p, 0, 0);
++            const v = root.vertical;
++            const len = v ? height : width, across = v ? width : height;
++            const pos = v ? o.y : o.x;
++            const plen = v ? p.height : p.width, pacross = v ? p.width : p.height;
++            const room = Math.min(pos, plen - pos - len) + 1;   // +1: the state layer sits 1 px inside
++            const along = 1 + 2 * Math.max(0, room) / Math.max(1, len);
++            const acr = pacross / Math.max(1, across - 2);
++            return Math.max(1, Math.min(root.hoverScale, along, acr));
++        }
++        onHoveredChanged: if (hovered) zoomTo = fitZoom()
++        scale: cfg.hoverZoom && hovered && interactive ? zoomTo : 1.0
++        z: hovered ? 1 : 0
++        Behavior on scale { NumberAnimation { duration: 170; easing.type: Easing.OutCubic } }
++
+         // state layer: pressed > active > warning, with a hover overlay
+         Rectangle {
+             anchors.fill: parent
+@@ -1044,9 +1174,9 @@
+             dragDy = 0;
+         }
+ 
+-        visible: root.modVisible(modelData)
++        visible: root.modVisibleOn(modelData, QsWindow.window && QsWindow.window.screen ? QsWindow.window.screen.name : "")
+         Layout.alignment: Qt.AlignCenter
+-        z: dragging ? 100 : 0
++        z: dragging ? 100 : (item && item.hovered === true ? 1 : 0)   // Kali: a zoomed module draws over its neighbours
+         opacity: dragging ? 0.75 : 1
+         transform: Translate { x: slot.dragDx; y: slot.dragDy }
+         sourceComponent: modelData === "clock" ? clockComp : (root.comps[modelData] ?? root.comps.icon)
+@@ -1135,7 +1265,7 @@
+                     color: Theme.text
+                     font.family: Theme.iconFont
+                     font.pixelSize: root.sz.marquee
+-                    renderType: root.vertical ? Text.QtRendering : Text.NativeRendering
++                    renderType: Text.QtRendering   // Kali: subpixel positioning, the smooth marquee glides instead of snapping
+                     // first copy is width-limited/elided when not scrolling
+                     width: index === 0 ? (Marquee.animating ? Marquee.textW
+                                                             : Math.min(Marquee.textW, Marquee.maxW))
+@@ -1205,6 +1335,9 @@
+         StatBadge {
+             label: "CPU"
+             unit: "%"
++            interactive: true                       // Kali: click = Task Manager
++            primaryHint: "Open Task Manager"
++            onPrimary: Quickshell.execDetached(["bash", root.taskManager])
+             valueText: String(root.cpuUsage)
+             warning: root.cpuUsage >= cfg.statsWarn
+             tip: "CPU usage: " + root.cpuUsage + "%"
+@@ -1217,6 +1350,9 @@
+         StatBadge {
+             label: "RAM"
+             unit: "%"
++            interactive: true
++            primaryHint: "Open Task Manager"
++            onPrimary: Quickshell.execDetached(["bash", root.taskManager])
+             valueText: String(root.memPercent)
+             warning: root.memPercent >= cfg.statsWarn
+             tip: "Memory: " + root.memUsedG.toFixed(1) + " / " + root.memTotalG.toFixed(1)
+@@ -1230,9 +1366,13 @@
+         StatBadge {
+             label: "GPU"
+             unit: root.gpuHasUsage ? "%" : ""
++            interactive: true
++            primaryHint: "Open Task Manager"
++            onPrimary: Quickshell.execDetached(["bash", root.taskManager])
+             valueText: root.gpuHasUsage ? String(root.gpuUsage) : "–"
+             warning: root.gpuHasUsage && root.gpuUsage >= cfg.statsWarn
+-            tip: root.gpuHasUsage ? "GPU usage: " + root.gpuUsage + "%" : "GPU usage: unavailable"
++            tip: root.gpuHasUsage ? "GPU usage: " + root.gpuUsage + "%" + (root.gpuTemp >= 0 ? " · " + root.gpuTemp + "°C" : "")
++                                  : "GPU usage: unavailable"
+         }
+     }
+ 
+@@ -1254,6 +1394,22 @@
+     Component {
+         id: wsC
+         Item {
++            id: wsRoot
++            // Kali: which monitor this bar instance lives on. With "Workspaces per monitor" each bar
++            // shows only its own monitor's workspaces, and the wide dot is the workspace that
++            // monitor is showing (not the globally focused one) — combined was confusing on 2 screens.
++            readonly property string monName: QsWindow.window && QsWindow.window.screen ? QsWindow.window.screen.name : ""
++            readonly property var hlMon: Hyprland.monitors.values.find(m => m.name === monName) ?? null
++            readonly property var wsList: {
++                const all = Hyprland.workspaces.values.filter(w => w.id > 0);
++                const mine = cfg.wsPerMonitor ? all.filter(w => w.monitor && w.monitor.name === monName) : all;
++                return mine.sort((a, b) => a.id - b.id);
++            }
++            function isCurrent(ws) {
++                if (!cfg.wsPerMonitor) return ws.focused;
++                return !!(hlMon && hlMon.activeWorkspace && hlMon.activeWorkspace.id === ws.id);
++            }
++
+             implicitWidth: root.vertical ? root.panelThick : wsLane.implicitWidth + 12
+             implicitHeight: wsLane.implicitHeight + (root.vertical ? 12 : 0)
+ 
+@@ -1263,21 +1419,24 @@
+                 gap: root.wsGapPx
+ 
+                 Repeater {
+-                    model: Hyprland.workspaces
++                    model: wsRoot.wsList
+                     delegate: Rectangle {
+                         id: dot
+                         required property var modelData
+-                        visible: modelData.id > 0
++                        readonly property bool current: wsRoot.isCurrent(modelData)
+                         Layout.alignment: Qt.AlignCenter
+                         implicitWidth: root.vertical ? root.wsDotPx
+-                                     : (modelData.focused ? Math.round(root.wsDotPx * 3.2) : root.wsDotPx)
+-                        implicitHeight: root.vertical ? (modelData.focused ? Math.round(root.wsDotPx * 2.4) : root.wsDotPx)
++                                     : (current ? Math.round(root.wsDotPx * 3.2) : root.wsDotPx)
++                        implicitHeight: root.vertical ? (current ? Math.round(root.wsDotPx * 2.4) : root.wsDotPx)
+                                                       : root.wsDotPx
+                         radius: root.wsDotPx / 2
++                        // Kali: upstream draws the current one at accent 0.2 — next to the 0.5 faint dots it was
++                        // hard to tell which workspace a screen shows, so it is solid here (like the old bar)
+                         color: modelData.urgent ? Theme.danger
+-                             : modelData.focused ? Qt.alpha(Theme.accent, 0.2)
++                             : current ? Qt.alpha(Theme.accent, 0.85)
+                              : dotMa.containsMouse ? Theme.accent2
+                              : Qt.alpha(Theme.textFaint, 0.5)
++                        Behavior on color { ColorAnimation { duration: Theme.animMed } }
+ 
+                         Behavior on implicitWidth { NumberAnimation { duration: Theme.animMed; easing.type: Easing.OutQuad } }
+                         Behavior on implicitHeight { NumberAnimation { duration: Theme.animMed; easing.type: Easing.OutQuad } }
+@@ -1299,8 +1458,10 @@
+                         Tip {
+                             id: dotTip
+                             hot: dotMa.containsMouse
+-                            title: "Workspace " + dot.modelData.id
+-                                   + (dot.modelData.urgent ? " · urgent" : dot.modelData.focused ? " · focused" : "")
++                            // per monitor: the laptop's 11-20 read as 1-10, matching SUPER+1..0 on that screen
++                            title: "Workspace " + (cfg.wsPerMonitor ? (dot.modelData.id - 1) % 10 + 1 : dot.modelData.id)
++                                   + (dot.modelData.urgent ? " · urgent" : dot.modelData.focused ? " · focused"
++                                      : dot.current ? " · shown" : "")
+                             hints: cfg.tooltipHints ? root.wsHints : ""
+                         }
+                     }
+@@ -1310,8 +1471,15 @@
+             WheelHandler {
+                 enabled: cfg.wsScroll
+                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+-                onWheel: e => root.run("hyprctl dispatch 'hl.dsp.focus({workspace=\"e"
+-                                       + (e.angleDelta.y > 0 ? "+1" : "-1") + "\"})'")
++                // Kali: previous / next workspace of THIS bar's monitor (wraps around). Upstream used e+1 / e-1,
++                // the next open workspace on ANY monitor: scrolling the Samsung bar past 3 jumped to the laptop.
++                onWheel: e => {
++                    const l = wsRoot.wsList;
++                    if (l.length === 0) return;
++                    const cur = l.findIndex(w => wsRoot.isCurrent(w));
++                    const i = cur < 0 ? 0 : (cur + (e.angleDelta.y > 0 ? 1 : -1) + l.length) % l.length;
++                    root.run("hyprctl dispatch 'hl.dsp.focus({workspace=" + l[i].id + "})'");
++                }
+             }
+         }
+     }
+@@ -1359,22 +1527,34 @@
+             }
+         }
+     }
++    // Kali — media: left click drops the MusicPreview card (cover, sound waves = seek bar, controls) under
++    // the pill; right click = next track, middle click = play / pause.
+     Component {
+         id: mediaC
+         Interactive {
++            id: mediaItem
+             readonly property bool playing: Marquee.player !== null && Marquee.player.isPlaying === true
+             readonly property real len: Math.min(Marquee.textW, Marquee.maxW)   // visible text length
++            readonly property var barWin: QsWindow.window
+ 
+             implicitWidth: root.vertical ? root.panelThick : len + 20
+             implicitHeight: root.vertical ? len + 20 : 18
+ 
+             tip: Marquee.text
+-            primaryHint: playing ? "Pause" : "Play"
++            active: barWin ? barWin.musicOpen === true : false
++            primaryHint: active ? "Close player" : "Open player"
+             secondaryHint: "Next track"
+-            tertiaryHint: "Previous track"
+-            onPrimary: root.mediaAct("toggle")
++            tertiaryHint: playing ? "Pause" : "Play"
++            onPrimary: {
++                if (!barWin) return;
++                // the card is centred on the pill: remember where the pill is in bar coordinates
++                const c = mapToItem(barWin.contentItem, width / 2, height / 2);
++                barWin.musicAnchor = Qt.point(c.x, c.y);
++                barWin.trayItem = null;
++                barWin.musicOpen = !barWin.musicOpen;
++            }
+             onSecondary: root.mediaAct("next")
+-            onTertiary: root.mediaAct("prev")
++            onTertiary: root.mediaAct("toggle")
+ 
+             // On vertical bars the same marquee is rotated: reads bottom→top on the left, top→bottom on the right.
+             MarqueeStrip {
+@@ -1386,6 +1566,79 @@
+         }
+     }
+ 
++    // System tray (StatusNotifierItem): one icon per app that offers one, like the Windows
++    // notification area. Left click = the app's own action (usually: show its window), right click =
++    // its menu (TrayMenu.qml, drawn in the bar's style), middle click = the app's secondary action.
++    // "Passive" items are shown too (KDE / Windows tuck them behind an overflow arrow): Spotify
++    // reports itself Passive all the time, and the user wants every app that offers an icon.
++    // trayHidden: items the bar already covers (nm-applet = the Network module; it keeps running
++    // for the Wi-Fi / VPN password prompts).
++    // Icons arrive and leave animated: the slot grows / shrinks (neighbours slide over) while the
++    // icon fades and scales, at the theme's animMed like the workspace dots. See trayModel.
++    Component {
++        id: trayC
++        Lane {
++            Repeater {
++                model: trayModel
++                delegate: Interactive {
++                    id: trayIcon
++                    required property int key
++                    required property bool leaving
++                    readonly property var barWin: QsWindow.window
++                    // the live SystemTrayItem; null once its app is gone (the icon is then leaving)
++                    readonly property var item: root.trayItemOf(key)
++                    // the last picture the app gave: a leaving icon keeps it while it shrinks
++                    property string lastIcon: ""
++                    readonly property string iconSrc: item ? item.icon : lastIcon
++                    onIconSrcChanged: if (item) lastIcon = iconSrc
++
++                    property bool arrived: false
++                    property real reveal: arrived && !leaving ? 1 : 0
++                    Behavior on reveal { NumberAnimation { duration: Theme.animMed; easing.type: Easing.OutCubic } }
++                    Component.onCompleted: arrived = true
++
++                    function toggleMenu() {
++                        if (!barWin || !item || !item.hasMenu) return;
++                        if (barWin.trayItem === item) { barWin.trayItem = null; return; }
++                        // the menu is centred on the icon: remember where it is in bar coordinates
++                        const c = mapToItem(barWin.contentItem, width / 2, height / 2);
++                        barWin.trayAnchor = Qt.point(c.x, c.y);
++                        barWin.musicOpen = false;
++                        barWin.trayItem = item;
++                    }
++
++                    Layout.alignment: Qt.AlignCenter
++                    implicitWidth: root.vertical ? root.panelThick : (root.sz.icon + 14) * reveal
++                    implicitHeight: root.vertical ? (root.sz.icon + 10) * reveal : root.panelThick - 2
++
++                    noTip: !item
++                    tip: item ? (item.tooltipTitle || item.title || item.id) : ""
++                    active: !!item && !!barWin && barWin.trayItem === item
++                    warning: !!item && item.status === Status.NeedsAttention
++                    primaryHint: item && item.onlyMenu ? "Open menu" : "Open"
++                    secondaryHint: item && item.hasMenu ? "Menu" : ""
++                    onPrimary: {
++                        if (!item) return;
++                        if (item.onlyMenu) toggleMenu();
++                        else item.activate();
++                    }
++                    onSecondary: toggleMenu()
++                    onTertiary: if (item) item.secondaryActivate()
++
++                    IconImage {
++                        anchors.centerIn: parent
++                        anchors.verticalCenterOffset: root.vertical ? 0 : root.iconYOffset
++                        implicitSize: root.sz.icon
++                        source: trayIcon.iconSrc
++                        asynchronous: true
++                        opacity: trayIcon.reveal
++                        scale: 0.6 + 0.4 * trayIcon.reveal
++                    }
++                }
++            }
++        }
++    }
++
+     Component {
+         id: volumeC
+         Mod {
+@@ -1444,12 +1697,39 @@
+                 left: cfg.position !== "right"
+                 right: cfg.position !== "left"
+             }
+-            implicitWidth: root.vertical ? root.panelThick + root.effEdge : 0
+-            implicitHeight: root.vertical ? 0 : root.panelThick + root.effEdge
+-            exclusionMode: cfg.reserveSpace ? ExclusionMode.Auto : ExclusionMode.Ignore
++            // Kali — zoomPad: transparent room on the inner side for the hover zoom. It is not part of the
++            // exclusive zone (windows don't move) and the input mask keeps it click-through.
++            implicitWidth: root.vertical ? root.panelThick + root.effEdge + root.zoomPad : 0
++            implicitHeight: root.vertical ? 0 : root.panelThick + root.effEdge + root.zoomPad
++            exclusionMode: cfg.reserveSpace ? ExclusionMode.Normal : ExclusionMode.Ignore
++            exclusiveZone: root.panelThick + root.effEdge
++            mask: Region { item: frame }
+             color: "transparent"
+             visible: root.barVisible
+ 
++            // Kali: MusicPreview card for this screen (opened by the media module)
++            property bool musicOpen: false
++            property point musicAnchor: Qt.point(0, 0)
++
++            MusicPreview {
++                host: bar
++                screen: bar.screen
++                player: Marquee.player
++                position: cfg.position
++                barThick: root.panelThick + root.effEdge
++            }
++
++            // Kali: menu of a tray icon on this screen (opened by the tray module)
++            property var trayItem: null
++            property point trayAnchor: Qt.point(0, 0)
++
++            TrayMenu {
++                host: bar
++                screen: bar.screen
++                position: cfg.position
++                barThick: root.panelThick + root.effEdge
++            }
++
+             // Drag & drop: (sx, sy) is the pointer position in window coordinates at release.
+             // The section is picked from where the pointer landed relative to the clock panel
+             // (before it → start, over it → center, after it → end); the position inside that

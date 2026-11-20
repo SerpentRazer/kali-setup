@@ -1,0 +1,13 @@
+#!/bin/sh
+# game-perf CMD...: ca cs2-perf, dar generic (fara fonturi/cache CS2): profilul „performance” (ventilatoare EC + EPP) cat ruleaza
+# CMD; power-profiles-daemon revine singur la iesire. powerprofilesctl (Python) porneste fara LD_LIBRARY_PATH/LD_PRELOAD ale
+# Steam-ului, iar CMD le primeste inapoi. Fara core dump. Folosit in LaunchOptions POE2 (8 nov 2026).
+ulimit -c 0
+command -v powerprofilesctl >/dev/null 2>&1 || exec "$@"
+[ -n "${LD_LIBRARY_PATH+x}" ] && export GPERF_LDLP="$LD_LIBRARY_PATH"
+[ -n "${LD_PRELOAD+x}" ] && export GPERF_LDP="$LD_PRELOAD"
+exec env -u LD_LIBRARY_PATH -u LD_PRELOAD powerprofilesctl launch -p performance -r game -- sh -c '
+[ -n "${GPERF_LDLP+x}" ] && export LD_LIBRARY_PATH="$GPERF_LDLP"
+[ -n "${GPERF_LDP+x}" ] && export LD_PRELOAD="$GPERF_LDP"
+unset GPERF_LDLP GPERF_LDP
+exec "$@"' game-perf "$@"

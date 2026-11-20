@@ -1,0 +1,84 @@
+-- Nume monitoare detectate pe acest sistem (verifica oricand cu: hyprctl monitors)
+--   eDP-1     = ecranul laptopului (1920x1080)
+--   HDMI-A-2  = monitorul extern pe HDMI, condus de GPU-ul NVIDIA (1920x1080)
+-- NOTA: in repo-ul original aceste variabile nu erau definite deloc (nil in Lua),
+-- ceea ce facea ca workspace_rule sa nu lege workspace-urile de niciun monitor.
+-- Samsung (HDMI-A-2) e monitorul PRINCIPAL (originea 0,0, aici aterizezi la login); laptopul e secundar.
+-- 11 nov 2026: numele conectorului Samsung depinde de modul MUX din Lenovo Vantage: Hybrid = HDMI-A-2,
+-- Hybrid Mode OPRIT (doar NVIDIA) = HDMI-A-1. Il citim din /sys (primul HDMI conectat); implicit HDMI-A-2.
+local function connected_hdmi()
+  local ok, name = pcall(function()
+    local p = io.popen("for s in /sys/class/drm/card*-HDMI-A-*/status; do [ \"$(cat \"$s\" 2>/dev/null)\" = connected ] && { echo \"${s%/status}\"; break; }; done")
+    local out = p:read("*l"); p:close(); return out
+  end)
+  return ok and name and name:match("(HDMI%-A%-%d+)$") or nil
+end
+local SAMSUNG = connected_hdmi() or "HDMI-A-2"
+MONITOR1        = SAMSUNG      -- principal: Samsung (workspace 1-10 + gaming)
+MONITOR2        = "eDP-1"      -- secundar: ecranul laptopului (workspace 11-20)
+PRIMARY_MONITOR = SAMSUNG      -- workspace-ul "gaming" ramane pe Samsung
+
+-- https://wiki.hypr.land/Configuring/Monitors/
+
+-- 1. First monitor
+-- hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 1 })
+-- hl.monitor({ output = "HDMI-A-1", disabled = true })
+
+-- 2. Second monitor
+-- hl.monitor({ output = "eDP-1", disabled = true })
+-- hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "auto", scale = 1 })
+
+-- 3. Extend: laptopul in stanga, Samsung-ul (principal) in dreapta.
+-- Samsung LC27RG50 raporteaza 60Hz ca "preferred", deci fara mod explicit ramanea pe 60.
+-- 239.76 e exact valoarea din `hyprctl monitors` (availableModes); "240" nu se potriveste.
+-- Samsung = originea (0,0). Laptopul ramane FIZIC in stanga => coordonata negativa,
+-- ca sa nu se inverseze directia mouse-ului intre ecrane.
+-- Intre 1 si 17 oct a stat pe 120 (testul cu glxgears din 3 oct parea sa arate ca 240 e mai prost).
+-- 17 oct, masurat cu wp_presentation (cand ajunge fiecare cadru pe ecran): pe calea Intel->NVIDIA un cadru
+-- costa ~17-20 ms ORICARE ar fi Hz-ul, iar la 239.76 se aliniaza pe o grila mai fina => mai multe cadre si
+-- latenta mai mica decat la 120 (48-68 fps vs 42-47; 17-22 ms vs 30 ms). REVERT: "1920x1080@120".
+hl.monitor({ output = SAMSUNG,    mode = "1920x1080@239.76", position = "0x0",     scale = 1 })
+hl.monitor({ output = "eDP-1",    mode = "1920x1080@144",    position = "-1920x0", scale = 1 })
+-- Orice alt monitor conectat (proiector etc.) — extins automat, ca inainte.
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+
+-- 4. Duplicate
+-- hl.monitor({ output = "eDP-1", mode = "preferred", position = "0x0", scale = 1 })
+-- hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x0", scale = 1 })
+
+-- 5. Second vertical monitor
+-- hl.monitor({ output = "HDMI-A-1", mode = "preferred", position = "0x0", scale = 1 })
+-- hl.monitor({ output = "eDP-1", mode = "preferred", position = "1920x0", scale = 1, transform = 1 })
+
+-- Setari facute din Settings > Display (quickshell: monitor principal, rezolutie, Hz, dezactivare).
+-- Se incarca DUPA liniile de mai sus, deci le suprascriu doar pentru monitoarele modificate acolo.
+-- "Reset" din pagina Display sterge fisierul => revii exact la layout-ul de mai sus.
+pcall(function()
+    local path = os.getenv("HOME") .. "/.config/quickshell/state/display.lua"
+    local f = io.open(path, "r")
+    if f then
+        f:close()
+        dofile(path)
+    end
+end)
+
+
+-- WORKSPACE RULES
+-- https://wiki.hypr.land/Configuring/Workspace-Rules/
+-- Fiecare monitor are workspace-urile LUI, ca Spaces pe macOS: SUPER+1..0 schimba workspace-ul monitorului
+-- de SUB MOUSE (keybinds.lua). MONITOR1 (Samsung) = 1-10, MONITOR2 (laptop) = 11-20; bara le arata pe
+-- fiecare ecran ca 1, 2, 3... Inainte 1-3 erau pe Samsung si 4-5 pe laptop, deci SUPER+4 cu mouse-ul
+-- pe Samsung schimba laptopul. Persistente (punctele din bara): 1-3 pe Samsung, 11-12 pe laptop.
+
+-- "gaming" NU e default: Hyprland ia PRIMA regula default a monitorului, iar regula asta era inaintea buclei,
+-- deci Samsung-ul pornea pe "gaming" (id -1337), nu pe 1. Ferestrele deschise dupa login aterizau acolo, bara nu-l
+-- arata (doar id > 0) si n-are tasta => la primul SUPER+1 terminalul "disparea" (2026-10-18).
+hl.workspace_rule({ workspace = "name:gaming", monitor = PRIMARY_MONITOR })
+for i = 1, 10 do
+    hl.workspace_rule({ workspace = tostring(i),      monitor = MONITOR1, default = (i == 1), persistent = (i <= 3) })
+    hl.workspace_rule({ workspace = tostring(10 + i), monitor = MONITOR2, default = (i == 1), persistent = (i <= 2) })
+end
+
+-- For other layouts such as scrolling, see example below
+-- hl.workspace_rule({ workspace = "1", monitor = MONITOR1, default = true, persistent = true, layout = scroling })
+

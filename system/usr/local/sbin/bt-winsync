@@ -1,0 +1,223 @@
+#!/usr/bin/python3 -I
+"""Tine aceeasi cheie Bluetooth (link key BR/EDR) in Kali si in Windows (dual boot, acelasi adaptor).
+
+Castile pastreaza o singura cheie pentru adresa adaptorului; daca le imperechezi in celalalt
+sistem, cheia veche nu mai e acceptata ("Permission denied (13)" in bluetoothd).
+
+  bt-winsync boot   (serviciul bt-winsync, inainte de bluetooth.service) daca Windows are pentru
+                    un dispozitiv o cheie noua fata de ultima rulare (re-imperecheat in Windows),
+                    o copiaza in BlueZ.
+  bt-winsync push   copiaza cheile din BlueZ in registrul Windows, doar pentru dispozitivele
+                    imperecheate in ambele; backup al hive-ului in /var/lib/bt-winsync/hive-backups.
+
+Cheile nu apar in log, doar primele 8 caractere din sha256.
+"""
+import glob
+import hashlib
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+
+HIVE = '/mnt/windows/Windows/System32/config/SYSTEM'
+BT = '/var/lib/bluetooth'
+STATE = '/var/lib/bt-winsync'
+PREFIX = 'HKEY_LOCAL_MACHINE\\SYSTEM'
+
+
+def log(msg):
+    print(f'bt-winsync: {msg}', flush=True)
+
+
+def fp(key):
+    return hashlib.sha256(key.encode()).hexdigest()[:8]
+
+
+def mac(s):
+    s = s.upper()
+    return ':'.join(s[i:i + 2] for i in range(0, 12, 2))
+
+
+def hive_clean():
+    with open(HIVE, 'rb') as f:
+        sig, seq1, seq2 = struct.unpack('<4sII', f.read(12))
+    return sig == b'regf' and seq1 == seq2
+
+
+def reged_export(key):
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, 'out.reg')
+        subprocess.run(['reged', '-x', HIVE, PREFIX, key, out], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not os.path.exists(out):
+            return ''
+        with open(out, 'rb') as f:
+            return f.read().decode('utf-8', 'replace').replace('\r', '')
+
+
+def controlset():
+    m = re.search(r'^"Current"=dword:([0-9a-f]{8})', reged_export('\\Select'), re.M)
+    return 'ControlSet%03d' % int(m.group(1), 16) if m else 'ControlSet001'
+
+
+def keys_path(cs):
+    return f'\\{cs}\\Services\\BTHPORT\\Parameters\\Keys'
+
+
+def windows_keys(cs):
+    """{(ADAPTER, DEVICE): KEY} doar pentru cheile BR/EDR (valori de 16 bytes direct sub adaptor)."""
+    keys, adapter = {}, None
+    for line in reged_export(keys_path(cs)).splitlines():
+        m = re.match(r'^\[.*\\Keys\\([0-9a-f]{12})\]$', line, re.I)
+        if m:
+            adapter = m.group(1)
+            continue
+        if line.startswith('['):
+            adapter = None
+            continue
+        m = re.match(r'^"([0-9a-f]{12})"=hex:((?:[0-9a-f]{2},){15}[0-9a-f]{2})$', line, re.I)
+        if adapter and m:
+            keys[(mac(adapter), mac(m.group(1)))] = m.group(2).replace(',', '').upper()
+    return keys
+
+
+def info_path(adapter, device):
+    return f'{BT}/{adapter}/{device}/info'
+
+
+def linux_key(path):
+    section = None
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith('['):
+                section = line
+            elif section == '[LinkKey]' and line.startswith('Key='):
+                return line[4:].upper()
+    return None
+
+
+def set_linux_key(path, key):
+    with open(path) as f:
+        lines = f.readlines()
+    section, done = None, False
+    for i, line in enumerate(lines):
+        if line.startswith('['):
+            section = line.strip()
+        elif section == '[LinkKey]' and line.startswith('Key='):
+            lines[i] = f'Key={key}\n'
+            done = True
+    if not done:
+        return False
+    shutil.copy2(path, path + '.bak-winsync')
+    with open(path + '.tmp', 'w') as f:
+        f.writelines(lines)
+    os.chmod(path + '.tmp', 0o600)
+    os.replace(path + '.tmp', path)
+    return True
+
+
+def state_file(adapter, device):
+    return f'{STATE}/{adapter}_{device}'.replace(':', '')
+
+
+def read_state(adapter, device):
+    try:
+        with open(state_file(adapter, device)) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
+
+
+def write_state(adapter, device, key):
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    with open(state_file(adapter, device), 'w') as f:
+        f.write(key + '\n')
+    os.chmod(state_file(adapter, device), 0o600)
+
+
+def boot():
+    cs = controlset()
+    for (adapter, device), wkey in sorted(windows_keys(cs).items()):
+        path = info_path(adapter, device)
+        if not os.path.exists(path):
+            continue
+        lkey, last = linux_key(path), read_state(adapter, device)
+        if wkey == lkey:
+            write_state(adapter, device, wkey)
+        elif last is None:
+            log(f'{device}: chei diferite la prima rulare (Windows {fp(wkey)}, Kali {fp(lkey)}); nu ating nimic')
+            write_state(adapter, device, wkey)
+        elif wkey != last:
+            if set_linux_key(path, wkey):
+                log(f'{device}: re-imperecheat in Windows -> cheie copiata in Kali ({fp(lkey)} -> {fp(wkey)})')
+            write_state(adapter, device, wkey)
+        else:
+            log(f'{device}: cheia din Kali e mai noua (re-imperecheat in Kali); ruleaza: pkexec bt-winsync push')
+
+
+def push():
+    if not os.access(HIVE, os.W_OK):
+        sys.exit(f'bt-winsync: {HIVE} nu se poate scrie (partitia Windows nu e montata rw)')
+    if not hive_clean():
+        sys.exit('bt-winsync: registrul Windows nu e inchis curat (hibernare / Fast Startup); nu scriu')
+    cs = controlset()
+    wkeys = windows_keys(cs)
+    changes = {}
+    for (adapter, device), wkey in wkeys.items():
+        path = info_path(adapter, device)
+        lkey = linux_key(path) if os.path.exists(path) else None
+        if lkey and len(lkey) == 32 and lkey != wkey:
+            changes[(adapter, device)] = lkey
+    if not changes:
+        log('nimic de copiat (cheile coincid deja)')
+        for (adapter, device), wkey in wkeys.items():
+            if os.path.exists(info_path(adapter, device)):
+                write_state(adapter, device, wkey)
+        return
+    bdir = f'{STATE}/hive-backups'
+    os.makedirs(bdir, mode=0o700, exist_ok=True)
+    backup = f'{bdir}/SYSTEM-{time.strftime("%Y-%m-%d_%H-%M-%S")}'
+    shutil.copy2(HIVE, backup)
+    for old in sorted(glob.glob(f'{bdir}/SYSTEM-*'))[:-3]:
+        os.remove(old)
+    reg = ['Windows Registry Editor Version 5.00', '']
+    for (adapter, device), key in sorted(changes.items()):
+        reg.append(f'[{PREFIX}{keys_path(cs)}\\{adapter.replace(":", "").lower()}]')
+        reg.append(f'"{device.replace(":", "").lower()}"=hex:' +
+                   ','.join(key[i:i + 2].lower() for i in range(0, 32, 2)))
+        reg.append('')
+    with tempfile.TemporaryDirectory() as d:
+        regfile = os.path.join(d, 'push.reg')
+        with open(regfile, 'w', newline='\r\n') as f:
+            f.write('\n'.join(reg))
+        subprocess.run(['reged', '-I', '-C', HIVE, PREFIX, regfile], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    after = windows_keys(cs)
+    bad = [dev for (ad, dev), key in changes.items() if after.get((ad, dev)) != key]
+    if bad or not hive_clean() or len(after) != len(wkeys):
+        shutil.copy2(backup, HIVE)
+        sys.exit(f'bt-winsync: verificarea a esuat ({bad}); am pus la loc backup-ul {backup}')
+    for (adapter, device), key in changes.items():
+        write_state(adapter, device, key)
+        log(f'{device}: cheia din Kali copiata in Windows ({fp(wkeys[(adapter, device)])} -> {fp(key)})')
+    log(f'backup registru: {backup}')
+
+
+if __name__ == '__main__':
+    if os.geteuid() != 0:
+        sys.exit('bt-winsync: ruleaza ca root (pkexec)')
+    if not os.path.exists(HIVE):
+        log(f'{HIVE} lipseste (partitia Windows nu e montata); sar peste')
+        sys.exit(0)
+    mode = sys.argv[1] if len(sys.argv) > 1 else ''
+    if mode == 'boot':
+        boot()
+    elif mode == 'push':
+        push()
+    else:
+        sys.exit(__doc__)
